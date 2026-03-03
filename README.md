@@ -1,7 +1,7 @@
 
-  # Minimal Two-Route Website
+  # FreightWright
 
-  This is a code bundle for Minimal Two-Route Website. The original project is available at https://www.figma.com/design/dqwmYsEKveMXFiWpAkRqXZ/Minimal-Two-Route-Website.
+  This is a code bundle for FreightWright. The original project is available at https://www.figma.com/design/dqwmYsEKveMXFiWpAkRqXZ/FreightWright.
 
   ## Running the code
 
