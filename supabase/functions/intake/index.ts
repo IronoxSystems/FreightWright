@@ -16,8 +16,8 @@ type IntakeBody = {
 
   // consent
   consentToContact: boolean; // REQUIRED checkbox
-  consentEmail?: boolean;    // default true
-  consentSms?: boolean;      // default false
+  consentEmail?: boolean; // default true
+  consentSms?: boolean; // default false
 };
 
 function clean(v?: string) {
@@ -25,31 +25,44 @@ function clean(v?: string) {
   return s.length ? s : null;
 }
 
+const CORS_HEADERS_BASE = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function corsHeaders(origin: string | null) {
-  // Tighten later if you want strict allowlist only.
-  const allowOrigin = origin ?? "*";
-  return {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Content-Type": "application/json",
-  };
+  // Allow-list later. For now: keep it permissive and reliable.
+  // If you want to echo origin, do it only when origin exists.
+  if (origin) {
+    return { ...CORS_HEADERS_BASE, "Access-Control-Allow-Origin": origin };
+  }
+  return { ...CORS_HEADERS_BASE };
 }
 
 function json(body: unknown, status = 200, origin: string | null = null) {
-  return new Response(JSON.stringify(body), { status, headers: corsHeaders(origin) });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders(origin), "Content-Type": "application/json" },
+  });
 }
 
 async function sha256Hex(input: string) {
   const data = new TextEncoder().encode(input);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
 
-  if (req.method === "OPTIONS") return json({ ok: true }, 200, origin);
+  // Always satisfy preflight with CORS headers.
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  }
+
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405, origin);
 
   try {
@@ -85,7 +98,7 @@ Deno.serve(async (req) => {
     const userAgent = req.headers.get("user-agent");
     const referrer = req.headers.get("referer");
 
-    // Hash IP (optional)
+    // Hash IP (optional) — store only the hash in DB
     let ipHash: string | null = null;
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -145,7 +158,13 @@ Deno.serve(async (req) => {
     }
 
     // 2) Send confirmation email (Resend)
-    const resendKey = Deno.env.get("RESEND_API_KEY")!;
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+    if (!resendKey) {
+      // Submission succeeded; email misconfigured
+      console.error("Missing RESEND_API_KEY");
+      return json({ ok: true, leadId, emailSent: false }, 200, origin);
+    }
+
     const fromName = Deno.env.get("FW_FROM_NAME") ?? "The Freightwright";
     const fromEmail = Deno.env.get("FW_FROM_EMAIL") ?? "foundry@freightwright.com";
     const replyTo = Deno.env.get("FW_REPLY_TO") ?? fromEmail;
@@ -186,13 +205,13 @@ Deno.serve(async (req) => {
       confirmationProviderId = j?.id ?? null;
 
       // 3) Update confirmation audit on most recent intake submission for this lead
-      const { error: updErr } = await supabase.rpc("fw_mark_latest_intake_confirmed", {
-        p_lead_id: leadId,
-        p_provider_id: confirmationProviderId,
-      });
-
-      // If you haven't created this helper RPC yet, we'll do it below.
-      if (updErr) console.error("confirmation audit update failed:", updErr);
+      if (confirmationProviderId) {
+        const { error: updErr } = await supabase.rpc("fw_mark_latest_intake_confirmed", {
+          p_lead_id: leadId,
+          p_provider_id: confirmationProviderId,
+        });
+        if (updErr) console.error("confirmation audit update failed:", updErr);
+      }
     } else {
       const errText = await resendResp.text();
       console.error("Resend error:", errText);
